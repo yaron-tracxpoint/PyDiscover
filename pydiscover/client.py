@@ -26,8 +26,9 @@ class TimeOutException(Exception):
 	pass
 
 
-def discover(magic="fna349fn", port=50000, password=None, timeout=5):
+def discover(magic="fna349fn", port=50000, password=None, timeout=2):
 	log.info("Looking for a server discovery")
+	response = []
 
 	# Prepare password
 	if password:
@@ -36,43 +37,47 @@ def discover(magic="fna349fn", port=50000, password=None, timeout=5):
 	# Build message
 	msg = "%s%s" % (magic, datetime.datetime.now().timestamp())
 
-	try:
+	#try:
 		# Send discover
-		s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)  # create UDP socket
-		s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)  # this is a broadcast socket
-		s.sendto(crypt(msg, password), ('<broadcast>', port))
-		s.settimeout(timeout)
+	s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)  # create UDP socket
+	s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)  # this is a broadcast socket
+	s.sendto(crypt(msg, password), ('<broadcast>', port))
+	s.settimeout(timeout)
 
-		data, addr = s.recvfrom(1024)  # wait for a packet
-	except socket.timeout:
-		log.info("No servers found")
+	response = []
+	response_data = set()
+	while True:
+		try:
+			response_x = s.recvfrom(1024)
+			response_data.add(response_x)
+		except socket.timeout:
+			break
 
-		raise TimeOutException("No servers found")
-
-	msg = decrypt(data, password)
-
+	for instance in response_data:
+		data, addr = instance
+		msg = decrypt(data, password)
 	# Get a correlates response
-	if msg.startswith(magic):
-		msg_details = msg[len(magic):]
+		if msg.startswith(magic):
+			msg_details = msg[len(magic):]
 
-		log.debug("Got service announcement from '%s' with response: %s" % ("%s:%s" % addr, msg_details))
+			log.debug("Got service announcement from '%s' with response: %s" % ("%s:%s" % addr, msg_details))
 
-		if msg_details.startswith("#ERROR#"):
-			error_details = msg_details[len("#ERROR#"):]
+			if msg_details.startswith("#ERROR#"):
+				error_details = msg_details[len("#ERROR#"):]
 
-			log.debug("Response from server: %s" % error_details)
+				log.debug("Response from server: %s" % error_details)
 
-			if "timestamp" in error_details:
-				raise TimeStampException(error_details)
-			elif "password" in error_details:
-				raise PasswordMagicException(error_details)
-		else:
-			undecoded_msg = msg_details[len("#OK#"):]
+				if "timestamp" in error_details:
+					raise TimeStampException(error_details)
+				elif "password" in error_details:
+					raise PasswordMagicException(error_details)
+			else:
+				undecoded_msg = msg_details[len("#OK#"):]
 
 			# Decode the json
-			ok_details = json.loads(undecoded_msg)
+				ok_details = json.loads(undecoded_msg)
 
-			return ok_details, "%s:%s" % addr
+				yield ok_details, "%s:%s" % addr
 
 
 def main():
@@ -88,8 +93,8 @@ def main():
 	gr_options = parser.add_argument_group("more options")
 
 	gr_options.add_argument('-t', '--timeout', dest="TIMEOUT", type=int,
-	                        help="timeout to wait for a server. Default 5s",
-	                        default=5)
+	                        help="timeout to wait for a server. Default 2s",
+	                        default=2)
 	gr_options.add_argument('--password', dest="PASSWORD", help="server access password. Default None", default=None)
 
 	parsed_args = parser.parse_args()
@@ -99,12 +104,13 @@ def main():
 
 	# Call server
 	try:
-		response, server = discover(magic=parsed_args.MAGIC,
+		respond = discover(magic=parsed_args.MAGIC,
 		                            port=parsed_args.PORT,
 		                            password=parsed_args.PASSWORD,
 		                            timeout=parsed_args.TIMEOUT)
 
-		log.info("Discovered server: '%s - Response: \"%s\"" % (server, str(response)))
+		for server, response  in respond: 
+			log.info("Discovered server: '%s - Response: \"%s\"" % (server, str(response)))
 	except Exception as e:
 		log.info(e)
 
